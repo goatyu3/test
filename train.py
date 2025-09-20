@@ -106,8 +106,15 @@ def save_best_checkpoint(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a cat vs. dog classifier using PyTorch.")
-    parser.add_argument("data_dir", type=str, help="Path to dataset root (expects train/ and optionally val/ directories).")
+    parser = argparse.ArgumentParser(
+        description="Train a cat vs. dog classifier on the torchvision CatsVsDogs dataset.",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default="data",
+        help="Directory used to download/cache the CatsVsDogs dataset.",
+    )
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs.")
     parser.add_argument("--batch-size", type=int, default=32, help="Mini-batch size.")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate.")
@@ -118,7 +125,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=4, help="Number of DataLoader worker processes.")
     parser.add_argument("--device", type=str, default=None, help="Computation device (cpu, cuda, cuda:0, ...).")
     parser.add_argument("--output-dir", type=str, default="runs", help="Directory to store checkpoints and logs.")
-    parser.add_argument("--split", type=float, default=0.2, help="Validation split ratio if no val/ directory is present.")
+    parser.add_argument(
+        "--split",
+        type=float,
+        default=0.2,
+        help="Fraction of samples reserved for validation (set 0 to disable).",
+    )
     parser.add_argument("--no-augment", action="store_true", help="Disable data augmentation for training.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     return parser.parse_args()

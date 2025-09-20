@@ -1,21 +1,12 @@
 # Cat vs. Dog Classifier (PyTorch)
 
 This project trains a PyTorch image classifier to distinguish between cats and dogs. The
-pipeline uses `torchvision.datasets.ImageFolder` so you can quickly plug in your own dataset
-with the following structure:
+pipeline now downloads the [Cats vs Dogs dataset](https://www.microsoft.com/en-us/download/details.aspx?id=54765)
+through `torchvision.datasets.CatsVsDogs`, so no manual data preparation is required. By default
+the archive is cached in a local `data/` directory; use `--data-dir` to point elsewhere.
 
-```
-<dataset_root>/
-├── train/
-│   ├── cats/
-│   └── dogs/
-└── val/ (optional)
-    ├── cats/
-    └── dogs/
-```
-
-If you do not provide a `val/` directory you can let the training script split the training set
-on the fly via `--split` (default `0.2`).
+Use `--split` (default `0.2`) to reserve a portion of the images for validation. Set `--split 0`
+if you want to train on the full dataset without a validation loader.
 
 ## Installation (Windows PowerShell)
 
@@ -35,16 +26,16 @@ pip install -r requirements.txt
 
 ## Training
 
-Run training by pointing to the dataset root. The best checkpoint is always saved to
-`runs/best.pt`, TensorBoard logs are stored in `runs/tensorboard`, and the normalized
+Run training and let the script download/cache the dataset automatically. The best checkpoint is
+saved to `runs/best.pt`, TensorBoard logs are stored in `runs/tensorboard`, and the normalized
 confusion matrix is exported as `runs/confusion_matrix.png`.
 
 ```powershell
-# Train using an explicit validation set
-python train.py D:\\data\\cats_dogs --epochs 15 --batch-size 32
+# Train with the default 80/20 train/val split and cache under .\data
+python train.py --epochs 15 --batch-size 32
 
-# Train by splitting the training folder 80/20 (no val/ folder required)
-python train.py D:\\data\\cats_dogs --epochs 15 --split 0.2
+# Train while caching the dataset on another drive and disabling the validation split
+python train.py --data-dir D:\\torch_cache --epochs 15 --split 0
 ```
 
 During training you can monitor metrics with TensorBoard:
@@ -72,12 +63,12 @@ The script prints the top predictions with their probabilities. Use `--device cu
 - `train.py` – training loop with TensorBoard logging, checkpointing, and confusion-matrix export.
 - `infer.py` – loads `runs/best.pt` and predicts the class of a single image.
 - `models.py` – model factory (ResNet18 backbone with optional dropout).
-- `datasets.py` – ImageFolder data loading utilities with optional train/validation split.
+- `datasets.py` – CatsVsDogs data loading utilities with optional train/validation split.
 - `utils.py` – helper utilities for reproducibility, metrics, checkpoint IO, and visualization.
 - `requirements.txt` – Python dependency list.
 
 ## Tips
 
 - Use `--no-pretrained` if you do not want to start from ImageNet weights.
-- When no validation set is available, the final epoch checkpoint is saved to `runs/best.pt`.
+- When `--split 0`, the final epoch checkpoint is saved to `runs/best.pt`.
 - Adjust `--num-workers` based on your CPU core count for faster data loading.

@@ -41,7 +41,7 @@ def get_transforms(image_size: int = 224, augment: bool = True) -> Tuple[transfo
     return transforms.Compose(train_transforms), val_transforms
 
 
-def _subset_dataset(dataset: datasets.ImageFolder, indices: Iterable[int]) -> Subset:
+def _subset_dataset(dataset: Dataset, indices: Iterable[int]) -> Subset:
     return Subset(dataset, list(indices))
 
 
@@ -54,32 +54,59 @@ def create_dataloaders(
     augment: bool = True,
     seed: int = 42,
 ) -> Tuple[DataLoader, Optional[DataLoader], List[str], Dict[str, int]]:
-    """Create training and validation dataloaders from an ImageFolder dataset."""
+    """Create training and validation dataloaders for the CatsVsDogs dataset.
+
+    The dataset will be downloaded automatically (if needed) to ``data_dir`` using
+    :class:`torchvision.datasets.CatsVsDogs`. When ``val_split`` is greater than 0,
+    a portion of the training samples is reserved for validation.
+    """
 
     data_path = Path(data_dir)
-    train_dir = data_path / "train"
-    val_dir = data_path / "val"
-    if not train_dir.exists():
-        raise FileNotFoundError(f"Training directory not found: {train_dir}")
+    data_path.mkdir(parents=True, exist_ok=True)
 
     train_transform, val_transform = get_transforms(image_size=image_size, augment=augment)
-    base_train_dataset = datasets.ImageFolder(train_dir, transform=train_transform)
-    class_names = base_train_dataset.classes
-    class_to_idx = base_train_dataset.class_to_idx
 
-    if val_dir.exists() and any(val_dir.iterdir()):
-        val_dataset: Optional[Dataset] = datasets.ImageFolder(val_dir, transform=val_transform)
-        train_dataset = base_train_dataset
+    full_train_dataset = datasets.CatsVsDogs(
+        root=str(data_path),
+        split="train",
+        transform=train_transform,
+        download=True,
+    )
+
+    dataset_classes = getattr(full_train_dataset, "classes", None)
+    if dataset_classes:
+        class_names = list(dataset_classes)
     else:
-        if val_split <= 0 or val_split >= 1:
-            raise ValueError("val_split must be between 0 and 1 when no validation directory is provided.")
+        class_names = ["cat", "dog"]
+
+    dataset_class_to_idx = getattr(full_train_dataset, "class_to_idx", None)
+    if dataset_class_to_idx:
+        class_to_idx = dict(dataset_class_to_idx)
+    else:
+        class_to_idx = {name: idx for idx, name in enumerate(class_names)}
+
+    if val_split < 0:
+        raise ValueError("val_split must be non-negative.")
+
+    val_dataset: Optional[Dataset] = None
+    if val_split > 0:
+        if val_split >= 1:
+            raise ValueError("val_split must be between 0 and 1.")
         generator = torch.Generator().manual_seed(seed)
-        num_samples = len(base_train_dataset)
+        num_samples = len(full_train_dataset)
         num_val = max(1, int(num_samples * val_split))
-        train_dataset, val_indices = _split_datasets(base_train_dataset, num_val, generator)
-        # val_indices is a Subset based on a dataset with train transforms. Create a separate dataset with validation transforms.
-        base_val_dataset = datasets.ImageFolder(train_dir, transform=val_transform)
-        val_dataset = _subset_dataset(base_val_dataset, val_indices)
+        train_indices, val_indices = _split_indices(num_samples, num_val, generator)
+        train_dataset = _subset_dataset(full_train_dataset, train_indices)
+
+        val_base_dataset = datasets.CatsVsDogs(
+            root=str(data_path),
+            split="train",
+            transform=val_transform,
+            download=False,
+        )
+        val_dataset = _subset_dataset(val_base_dataset, val_indices)
+    else:
+        train_dataset = full_train_dataset
 
     train_loader = DataLoader(
         train_dataset,
@@ -104,16 +131,15 @@ def create_dataloaders(
     return train_loader, val_loader, class_names, class_to_idx
 
 
-def _split_datasets(
-    dataset: datasets.ImageFolder,
+def _split_indices(
+    num_samples: int,
     num_val: int,
     generator: torch.Generator,
-) -> Tuple[Subset, List[int]]:
-    """Split a dataset into training subset and validation indices."""
+) -> Tuple[List[int], List[int]]:
+    """Split indices for training and validation subsets."""
 
-    indices = torch.randperm(len(dataset), generator=generator)
+    indices = torch.randperm(num_samples, generator=generator)
     val_indices = indices[:num_val].tolist()
     train_indices = indices[num_val:].tolist()
-    train_subset = _subset_dataset(dataset, train_indices)
-    return train_subset, val_indices
+    return train_indices, val_indices
 
