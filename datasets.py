@@ -9,6 +9,55 @@ from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import datasets, transforms
 
 
+CAT_BREEDS = {
+    "Abyssinian",
+    "Bengal",
+    "Birman",
+    "Bombay",
+    "British_Shorthair",
+    "Egyptian_Mau",
+    "Maine_Coon",
+    "Persian",
+    "Ragdoll",
+    "Russian_Blue",
+    "Siamese",
+    "Sphynx",
+}
+
+DOG_BREEDS = {
+    "american_bulldog",
+    "american_pit_bull_terrier",
+    "basset_hound",
+    "beagle",
+    "boxer",
+    "chihuahua",
+    "english_cocker_spaniel",
+    "english_setter",
+    "german_shorthaired",
+    "great_pyrenees",
+    "havanese",
+    "japanese_chin",
+    "keeshond",
+    "leonberger",
+    "miniature_pinscher",
+    "newfoundland",
+    "pomeranian",
+    "pug",
+    "saint_bernard",
+    "samoyed",
+    "scottish_terrier",
+    "shiba_inu",
+    "staffordshire_bull_terrier",
+    "wheaten_terrier",
+    "yorkshire_terrier",
+}
+
+PET_BREED_TO_CATEGORY: Dict[str, str] = {
+    **{breed: "cat" for breed in CAT_BREEDS},
+    **{breed: "dog" for breed in DOG_BREEDS},
+}
+
+
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
@@ -54,10 +103,11 @@ def create_dataloaders(
     augment: bool = True,
     seed: int = 42,
 ) -> Tuple[DataLoader, Optional[DataLoader], List[str], Dict[str, int]]:
-    """Create training and validation dataloaders for the CatsVsDogs dataset.
+    """Create training and validation dataloaders for the Oxford-IIIT Pet dataset.
 
-    The dataset will be downloaded automatically (if needed) to ``data_dir`` using
-    :class:`torchvision.datasets.CatsVsDogs`. When ``val_split`` is greater than 0,
+    Images are downloaded automatically (if needed) to ``data_dir`` using
+    :class:`torchvision.datasets.OxfordIIITPet`. Only the coarse ``cat`` and ``dog``
+    labels are exposed to the training loop. When ``val_split`` is greater than 0,
     a portion of the training samples is reserved for validation.
     """
 
@@ -66,24 +116,33 @@ def create_dataloaders(
 
     train_transform, val_transform = get_transforms(image_size=image_size, augment=augment)
 
-    full_train_dataset = datasets.CatsVsDogs(
+    full_train_dataset = datasets.OxfordIIITPet(
         root=str(data_path),
-        split="train",
+        split="trainval",
+        target_types="category",
         transform=train_transform,
         download=True,
     )
 
-    dataset_classes = getattr(full_train_dataset, "classes", None)
-    if dataset_classes:
-        class_names = list(dataset_classes)
-    else:
-        class_names = ["cat", "dog"]
+    class_names = ["cat", "dog"]
+    class_to_idx = {name: idx for idx, name in enumerate(class_names)}
 
-    dataset_class_to_idx = getattr(full_train_dataset, "class_to_idx", None)
-    if dataset_class_to_idx:
-        class_to_idx = dict(dataset_class_to_idx)
-    else:
-        class_to_idx = {name: idx for idx, name in enumerate(class_names)}
+    def _make_target_transform(classes: Iterable[str]):
+        class_list = list(classes)
+
+        def _target_transform(target: int) -> int:
+            class_name = class_list[target]
+            try:
+                category = PET_BREED_TO_CATEGORY[class_name]
+            except KeyError as exc:
+                raise KeyError(
+                    f"Unknown Oxford-IIIT Pet class '{class_name}' encountered while remapping"
+                ) from exc
+            return class_to_idx[category]
+
+        return _target_transform
+
+    full_train_dataset.target_transform = _make_target_transform(full_train_dataset.classes)
 
     if val_split < 0:
         raise ValueError("val_split must be non-negative.")
@@ -98,12 +157,14 @@ def create_dataloaders(
         train_indices, val_indices = _split_indices(num_samples, num_val, generator)
         train_dataset = _subset_dataset(full_train_dataset, train_indices)
 
-        val_base_dataset = datasets.CatsVsDogs(
+        val_base_dataset = datasets.OxfordIIITPet(
             root=str(data_path),
-            split="train",
+            split="trainval",
+            target_types="category",
             transform=val_transform,
             download=False,
         )
+        val_base_dataset.target_transform = _make_target_transform(val_base_dataset.classes)
         val_dataset = _subset_dataset(val_base_dataset, val_indices)
     else:
         train_dataset = full_train_dataset

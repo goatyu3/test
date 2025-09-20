@@ -1,9 +1,10 @@
 # Cat vs. Dog Classifier (PyTorch)
 
 This project trains a PyTorch image classifier to distinguish between cats and dogs. The
-pipeline now downloads the [Cats vs Dogs dataset](https://www.microsoft.com/en-us/download/details.aspx?id=54765)
-through `torchvision.datasets.CatsVsDogs`, so no manual data preparation is required. By default
-the archive is cached in a local `data/` directory; use `--data-dir` to point elsewhere.
+pipeline now downloads the [Oxford-IIIT Pet dataset](https://www.robots.ox.ac.uk/~vgg/data/pets/)
+through `torchvision.datasets.OxfordIIITPet`, automatically remapping the 37 pet breeds into
+coarse `cat` and `dog` labels. By default the images are cached in a local `data/` directory;
+use `--data-dir` to point elsewhere.
 
 Use `--split` (default `0.2`) to reserve a portion of the images for validation. Set `--split 0`
 if you want to train on the full dataset without a validation loader.
@@ -67,7 +68,7 @@ The script prints the top predictions with their probabilities. Use `--device cu
 - `train.py` – training loop with TensorBoard logging, checkpointing, and confusion-matrix export.
 - `infer.py` – loads `runs/best.pt` and predicts the class of a single image.
 - `models.py` – model factory (ResNet18 backbone with optional dropout).
-- `datasets.py` – CatsVsDogs data loading utilities with optional train/validation split.
+- `datasets.py` – Oxford-IIIT Pet data loading utilities with optional train/validation split.
 - `utils.py` – helper utilities for reproducibility, metrics, checkpoint IO, and visualization.
 - `requirements.txt` – Python dependency list.
 
