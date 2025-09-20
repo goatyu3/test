@@ -8,6 +8,10 @@ the archive is cached in a local `data/` directory; use `--data-dir` to point el
 Use `--split` (default `0.2`) to reserve a portion of the images for validation. Set `--split 0`
 if you want to train on the full dataset without a validation loader.
 
+Mixed-precision (AMP) is enabled automatically on CUDA devices to cut memory usage, and you can
+accumulate gradients across batches with `--grad-accum-steps` to simulate larger batch sizes on
+GPUs such as the RTX 3060 6GB. Disable AMP with `--no-amp` if you need deterministic FP32 math.
+
 ## Installation (Windows PowerShell)
 
 ```powershell
@@ -31,8 +35,8 @@ saved to `runs/best.pt`, TensorBoard logs are stored in `runs/tensorboard`, and 
 confusion matrix is exported as `runs/confusion_matrix.png`.
 
 ```powershell
-# Train with the default 80/20 train/val split and cache under .\data
-python train.py --epochs 15 --batch-size 32
+# Train with the default 80/20 train/val split and AMP enabled (recommended for 6GB GPUs)
+python train.py --epochs 15 --batch-size 16 --grad-accum-steps 2
 
 # Train while caching the dataset on another drive and disabling the validation split
 python train.py --data-dir D:\\torch_cache --epochs 15 --split 0
@@ -69,6 +73,7 @@ The script prints the top predictions with their probabilities. Use `--device cu
 
 ## Tips
 
+- Effective batch size is `batch_size * grad_accum_steps`; tune both values to fit your GPU RAM.
 - Use `--no-pretrained` if you do not want to start from ImageNet weights.
 - When `--split 0`, the final epoch checkpoint is saved to `runs/best.pt`.
 - Adjust `--num-workers` based on your CPU core count for faster data loading.

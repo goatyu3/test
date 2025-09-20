@@ -9,6 +9,7 @@ from typing import Dict, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.cuda.amp import GradScaler, autocast
 from sklearn.metrics import confusion_matrix
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
@@ -23,25 +24,45 @@ def train_one_epoch(
     dataloader: torch.utils.data.DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
+    scaler: GradScaler,
     device: torch.device,
+    use_amp: bool,
+    grad_accum_steps: int,
 ) -> Tuple[float, float]:
     model.train()
     loss_meter = AverageMeter(name="train_loss")
     acc_meter = AverageMeter(name="train_acc")
 
+    optimizer.zero_grad(set_to_none=True)
     progress = tqdm(dataloader, desc="Train", leave=False)
-    for inputs, targets in progress:
+    num_batches = len(dataloader)
+    for step, (inputs, targets) in enumerate(progress):
         inputs = inputs.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
 
-        optimizer.zero_grad(set_to_none=True)
-        outputs = model(inputs)
-        loss = criterion(outputs, targets)
-        loss.backward()
-        optimizer.step()
+        with autocast(enabled=use_amp):
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+
+        loss_value = loss.item()
+        loss = loss / grad_accum_steps
+
+        if use_amp:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
+        should_step = (step + 1) % grad_accum_steps == 0 or (step + 1) == num_batches
+        if should_step:
+            if use_amp:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
 
         acc = accuracy_from_logits(outputs, targets)
-        loss_meter.update(loss.item(), n=inputs.size(0))
+        loss_meter.update(loss_value, n=inputs.size(0))
         acc_meter.update(acc, n=inputs.size(0))
         progress.set_postfix(loss=f"{loss_meter.avg:.4f}", acc=f"{acc_meter.avg:.4f}")
 
@@ -53,6 +74,7 @@ def evaluate(
     dataloader: torch.utils.data.DataLoader | None,
     criterion: nn.Module,
     device: torch.device,
+    use_amp: bool,
 ) -> Tuple[float, float, np.ndarray, np.ndarray]:
     if dataloader is None:
         return float("nan"), float("nan"), np.array([]), np.array([])
@@ -69,7 +91,8 @@ def evaluate(
             inputs = inputs.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
 
-            outputs = model(inputs)
+            with autocast(enabled=use_amp):
+                outputs = model(inputs)
             loss = criterion(outputs, targets)
 
             acc = accuracy_from_logits(outputs, targets)
@@ -116,7 +139,7 @@ def parse_args() -> argparse.Namespace:
         help="Directory used to download/cache the CatsVsDogs dataset.",
     )
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs.")
-    parser.add_argument("--batch-size", type=int, default=32, help="Mini-batch size.")
+    parser.add_argument("--batch-size", type=int, default=16, help="Mini-batch size.")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate.")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay for optimizer.")
     parser.add_argument("--dropout", type=float, default=0.0, help="Optional dropout applied to the classifier head.")
@@ -131,6 +154,17 @@ def parse_args() -> argparse.Namespace:
         default=0.2,
         help="Fraction of samples reserved for validation (set 0 to disable).",
     )
+    parser.add_argument(
+        "--grad-accum-steps",
+        type=int,
+        default=1,
+        help="Number of gradient accumulation steps to simulate larger effective batch sizes.",
+    )
+    parser.add_argument(
+        "--no-amp",
+        action="store_true",
+        help="Disable automatic mixed precision training even when CUDA is available.",
+    )
     parser.add_argument("--no-augment", action="store_true", help="Disable data augmentation for training.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     return parser.parse_args()
@@ -142,6 +176,9 @@ def main() -> None:
     device = select_device(args.device)
     output_dir = ensure_exists(args.output_dir)
     writer = SummaryWriter(log_dir=str(output_dir / "tensorboard"))
+
+    if args.grad_accum_steps < 1:
+        raise ValueError("--grad-accum-steps must be at least 1")
 
     train_loader, val_loader, class_names, class_to_idx = create_dataloaders(
         data_dir=args.data_dir,
@@ -158,6 +195,8 @@ def main() -> None:
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    use_amp = torch.cuda.is_available() and device.type == "cuda" and not args.no_amp
+    scaler = GradScaler(enabled=use_amp)
 
     best_acc = float("-inf")
     best_epoch = 0
@@ -166,8 +205,17 @@ def main() -> None:
 
     for epoch in range(1, args.epochs + 1):
         print(f"Epoch {epoch}/{args.epochs}")
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc, predictions, targets = evaluate(model, val_loader, criterion, device)
+        train_loss, train_acc = train_one_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            scaler,
+            device,
+            use_amp,
+            args.grad_accum_steps,
+        )
+        val_loss, val_acc, predictions, targets = evaluate(model, val_loader, criterion, device, use_amp)
 
         writer.add_scalar("Loss/train", train_loss, epoch)
         writer.add_scalar("Accuracy/train", train_acc, epoch)
