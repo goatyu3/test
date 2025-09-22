@@ -57,6 +57,36 @@ PET_BREED_TO_CATEGORY: Dict[str, str] = {
     **{breed: "dog" for breed in DOG_BREEDS},
 }
 
+class OxfordPetBinaryTarget:
+    """Callable remapping Oxford-IIIT Pet breed indices to binary cat/dog labels."""
+
+    def __init__(self, classes: Iterable[str], class_to_idx: Dict[str, int]) -> None:
+        self.classes = list(classes)
+        self.class_to_idx = dict(class_to_idx)
+
+    def __call__(self, target: int) -> int:
+        try:
+            class_name = self.classes[target]
+        except IndexError as exc:
+            raise IndexError(
+                f"Target index {target} is out of bounds for available classes."
+            ) from exc
+
+        try:
+            category = PET_BREED_TO_CATEGORY[class_name]
+        except KeyError as exc:
+            raise KeyError(
+                f"Unknown Oxford-IIIT Pet class '{class_name}' encountered while remapping"
+            ) from exc
+
+        try:
+            return self.class_to_idx[category]
+        except KeyError as exc:
+            raise KeyError(
+                f"Category '{category}' missing from class_to_idx mapping {self.class_to_idx}"
+            ) from exc
+
+
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -116,33 +146,18 @@ def create_dataloaders(
 
     train_transform, val_transform = get_transforms(image_size=image_size, augment=augment)
 
-    full_train_dataset = datasets.OxfordIIITPet(
-        root=str(data_path),
-        split="trainval",
-        target_types="category",
-        transform=train_transform,
-        download=True,
-    )
-
     class_names = ["cat", "dog"]
     class_to_idx = {name: idx for idx, name in enumerate(class_names)}
 
-    def _make_target_transform(classes: Iterable[str]):
-        class_list = list(classes)
 
-        def _target_transform(target: int) -> int:
-            class_name = class_list[target]
-            try:
-                category = PET_BREED_TO_CATEGORY[class_name]
-            except KeyError as exc:
-                raise KeyError(
-                    f"Unknown Oxford-IIIT Pet class '{class_name}' encountered while remapping"
-                ) from exc
-            return class_to_idx[category]
-
-        return _target_transform
-
-    full_train_dataset.target_transform = _make_target_transform(full_train_dataset.classes)
+    full_train_dataset = datasets.OxfordIIITPet(
+        root=str(data_path),
+        split="trainval",
+        target_types="binary-category",  # ← 改成这个
+        transform=train_transform,
+        target_transform=int,  # ← 只做一次 int 转换以确保是 0/1 的整数
+        download=True,
+    )
 
     if val_split < 0:
         raise ValueError("val_split must be non-negative.")
@@ -160,12 +175,15 @@ def create_dataloaders(
         val_base_dataset = datasets.OxfordIIITPet(
             root=str(data_path),
             split="trainval",
-            target_types="category",
+            target_types="binary-category",  # ← 同样改这里
             transform=val_transform,
+            target_transform=int,  # ← 与训练集一致
             download=False,
         )
-        val_base_dataset.target_transform = _make_target_transform(val_base_dataset.classes)
         val_dataset = _subset_dataset(val_base_dataset, val_indices)
+
+
+
     else:
         train_dataset = full_train_dataset
 
